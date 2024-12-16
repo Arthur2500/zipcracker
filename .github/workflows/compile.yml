@@ -1,0 +1,36 @@
+name: Build and Upload zipcracker
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    name: Build and Upload zipcracker
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libzip-dev
+
+    - name: Compile zipcracker
+      run: |
+        g++ -std=c++17 -pthread -lzip -o zipcracker zipcracker.cpp
+
+    - name: Archive binary
+      run: |
+        mkdir -p artifacts
+        mv zipcracker artifacts/
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: zipcracker
+        path: artifacts/zipcracker
