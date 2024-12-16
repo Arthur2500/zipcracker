@@ -11,6 +11,7 @@
 #include <minizip/unzip.h>
 #include <chrono>
 #include <iomanip>
+#include <cmath>
 
 std::atomic<size_t> testedPasswords(0);
 std::atomic<bool> found(false);
