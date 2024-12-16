@@ -14,22 +14,19 @@
 #include <cmath>
 #include <cstring>
 
-// Globale Stati
 std::atomic<size_t> testedPasswords(0);
 std::atomic<bool> found(false);
 std::mutex passwordMutex;
 std::condition_variable passwordCv;
 
-// Struktur für das Lesen aus einem (gemeinsamen) Speicherpuffer
 struct MemoryBuffer {
-    const unsigned char* data; // zeigt auf das gemeinsame zipData-Array
+    const unsigned char* data;
     size_t size;
     size_t pos;
 };
 
-// Minizip-Callbacks für das Lesen aus einem MemoryBuffer
 voidpf ZCALLBACK mem_open_file_func(voidpf opaque, const char*, int) {
-    return opaque; // opaque ist unser MemoryBuffer*
+    return opaque;
 }
 
 uLong ZCALLBACK mem_read_file_func(voidpf opaque, voidpf, void* buf, uLong size) {
@@ -77,7 +74,6 @@ long ZCALLBACK mem_seek_file_func(voidpf opaque, voidpf, uLong offset, int origi
 }
 
 int ZCALLBACK mem_close_file_func(voidpf opaque, voidpf) {
-    // Wird bei unzClose() aufgerufen
     MemoryBuffer* mem = static_cast<MemoryBuffer*>(opaque);
     delete mem;
     return 0;
@@ -87,7 +83,6 @@ int ZCALLBACK mem_error_file_func(voidpf, voidpf) {
     return 0;
 }
 
-// Liest die ZIP-Datei komplett in den RAM
 std::vector<unsigned char> loadZipFileToMemory(const char* zipFilename) {
     std::ifstream file(zipFilename, std::ios::binary | std::ios::ate);
     if (!file) {
@@ -108,7 +103,6 @@ std::vector<unsigned char> loadZipFileToMemory(const char* zipFilename) {
     return buffer;
 }
 
-// Öffnet ein unzFile-Handle, das exklusiv einem Thread gehört
 unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     zlib_filefunc_def memory_filefunc_def;
     memory_filefunc_def.zopen_file = mem_open_file_func;
@@ -119,8 +113,6 @@ unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     memory_filefunc_def.zclose_file = mem_close_file_func;
     memory_filefunc_def.zerror_file = mem_error_file_func;
 
-    // Jeder Thread bekommt sein eigenes MemoryBuffer-Objekt,
-    // zeigt aber auf das GLEICHE zipData-Array
     MemoryBuffer* memBuf = new MemoryBuffer;
     memBuf->data = zipData.data();
     memBuf->size = zipData.size();
@@ -128,7 +120,6 @@ unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
 
     memory_filefunc_def.opaque = memBuf;
 
-    // Dummy cast, unzOpen2 erwartet filename als const char*
     unzFile uf = unzOpen2((const char*)memBuf, &memory_filefunc_def);
     if (!uf) {
         delete memBuf;
@@ -136,7 +127,6 @@ unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     return uf;
 }
 
-// Erkennen der Verschlüsselung, indem wir kurz ein Handle erstellen und wieder schließen
 std::string detectZipEncryption(const std::vector<unsigned char>& zipData) {
     unzFile tmp = openThreadLocalHandle(zipData);
     if (!tmp) return "unknown";
@@ -156,11 +146,7 @@ std::string detectZipEncryption(const std::vector<unsigned char>& zipData) {
     return "unknown";
 }
 
-// Passworttest mit thread-lokalem Handle
 bool testZipPasswordThreadLocal(unzFile uf, const char* password) {
-    // Jedem Thread gehört sein eigenes unzFile, also kein globaler Mutex nötig
-
-    // Vor jedem Versuch zurück an den Anfang (CloseCurrentFile + GoToFirstFile)
     unzCloseCurrentFile(uf);
     if (unzGoToFirstFile(uf) != UNZ_OK) {
         return false;
@@ -172,7 +158,6 @@ bool testZipPasswordThreadLocal(unzFile uf, const char* password) {
     return false;
 }
 
-// Passwort-Generator
 void generatePasswords(const std::string& prefix, int length, const std::string& charset,
                        std::queue<std::string>& passwordQueue)
 {
@@ -189,7 +174,6 @@ void generatePasswords(const std::string& prefix, int length, const std::string&
     }
 }
 
-// Worker-Thread: Ruft testZipPasswordThreadLocal() auf
 void bruteForceThread(unzFile threadLocalHandle, std::queue<std::string>& passwordQueue, std::string& result) {
     while (!found.load()) {
         std::string password;
@@ -210,7 +194,6 @@ void bruteForceThread(unzFile threadLocalHandle, std::queue<std::string>& passwo
     }
 }
 
-// Fortschrittsanzeige
 void showProgress(size_t totalPasswords) {
     auto start = std::chrono::steady_clock::now();
     while (!found.load()) {
@@ -264,7 +247,6 @@ void showProgress(size_t totalPasswords) {
     }
 }
 
-// Anzahl möglicher Passwörter berechnen
 size_t calculateTotalPasswords(int length, const std::string& charset, bool recursive) {
     size_t total = 0;
     if (recursive) {
@@ -338,19 +320,16 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // ZIP einmal in RAM laden
     std::vector<unsigned char> zipData = loadZipFileToMemory(file);
     if (zipData.empty()) {
         return 1;
     }
 
-    // Verschlüsselungs-Typ ermitteln
     std::string encryptionType = detectZipEncryption(zipData);
     std::cout << "Erkannte Verschlüsselungsmethode: " << encryptionType << std::endl;
 
     const std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    // Queue für Passwörter
     std::queue<std::string> passwordQueue;
     std::string result;
     size_t totalPasswords = 0;
@@ -368,7 +347,6 @@ int main(int argc, char* argv[]) {
         totalPasswords = passwordQueue.size();
     } else {
         totalPasswords = calculateTotalPasswords(passwordLength, charset, recursive);
-        // Generator im Hintergrund
         std::thread generatorThread([&]() {
             if (recursive) {
                 for (int i = 1; i <= passwordLength; ++i) {
@@ -381,34 +359,28 @@ int main(int argc, char* argv[]) {
         generatorThread.detach();
     }
 
-    // Fortschrittsanzeige
     std::thread progressThread([&]() { showProgress(totalPasswords); });
 
-    // Jeder Thread erstellt EINE Handle-Instanz
     std::vector<std::thread> threads;
     threads.reserve(threadCount);
     for (int i = 0; i < threadCount; ++i) {
         unzFile threadLocalHandle = openThreadLocalHandle(zipData);
         if (!threadLocalHandle) {
             std::cerr << "Fehler beim Erstellen eines unzFile-Handles für Thread " << i << "\n";
-            continue; // Oder Programm beenden
+            continue;
         }
-        // Worker-Thread
         threads.emplace_back([&, threadLocalHandle]() {
             bruteForceThread(threadLocalHandle, passwordQueue, result);
-            // Wenn fertig, Handle schließen
             unzClose(threadLocalHandle);
         });
     }
 
-    // Haupt-Thread wartet auf die Worker
     for (auto& t : threads) {
         if (t.joinable()) {
             t.join();
         }
     }
 
-    // Fortschrittsanzeige beenden
     progressThread.join();
 
     if (found) {
