@@ -99,9 +99,13 @@ void showProgress(size_t totalPasswords) {
 }
 
 size_t calculateTotalPasswords(int length, const std::string& charset) {
-    size_t total = 1;
-    for (int i = 0; i < length; ++i) {
-        total *= charset.size();
+    size_t total = 0;
+    for (int i = 1; i <= length; ++i) {
+        size_t count = 1;
+        for (int j = 0; j < i; ++j) {
+            count *= charset.size();
+        }
+        total += count;
     }
     return total;
 }
@@ -118,12 +122,14 @@ int main(int argc, char* argv[]) {
         {"length", required_argument, 0, 'l'},
         {"wordlist", required_argument, 0, 'w'},
         {"threads", required_argument, 0, 't'},
+        {"recursive", no_argument, 0, 'r'},
         {0, 0, 0, 0}
     };
 
     int option_index = 0;
     int opt;
-    while ((opt = getopt_long(argc, argv, "f:l:w:t:", long_options, &option_index)) != -1) {
+    bool recursive = false;
+    while ((opt = getopt_long(argc, argv, "f:l:w:t:r", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'f':
                 file = optarg;
@@ -142,8 +148,11 @@ int main(int argc, char* argv[]) {
                     return 1;
                 }
                 break;
+            case 'r':
+                recursive = true;
+                break;
             default:
-                std::cerr << "Verwendung: " << argv[0] << " -f <file> [-l <password-length>] [-w <wordlist>] [-t <thread-count>]" << std::endl;
+                std::cerr << "Verwendung: " << argv[0] << " -f <file> [-l <password-length>] [-w <wordlist>] [-t <thread-count>] [-r]" << std::endl;
                 return 1;
         }
     }
@@ -172,7 +181,13 @@ int main(int argc, char* argv[]) {
     } else {
         totalPasswords = calculateTotalPasswords(passwordLength, charset);
         std::thread generatorThread([&]() {
-            generatePasswords("", passwordLength, charset, passwordQueue);
+            if (recursive) {
+                for (int i = 1; i <= passwordLength; ++i) {
+                    generatePasswords("", i, charset, passwordQueue);
+                }
+            } else {
+                generatePasswords("", passwordLength, charset, passwordQueue);
+            }
         });
         generatorThread.detach();
     }
