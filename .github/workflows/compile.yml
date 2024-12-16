@@ -17,11 +17,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libzip-dev
+          sudo apt-get install -y build-essential libminizip-dev
 
       - name: Compile zipcracker
         run: |
-          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lminizip
 
       - name: Archive binary
         run: |
@@ -44,11 +44,11 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install libzip
+          brew install minizip
 
       - name: Compile zipcracker
         run: |
-          g++ -o zipcracker src/zipcracker.cpp -I/opt/homebrew/include -L/opt/homebrew/lib -lzip -std=c++17
+          g++ -o zipcracker src/zipcracker.cpp -I/opt/homebrew/include -L/opt/homebrew/lib -lminizip -std=c++17
 
       - name: Archive binary
         run: |
