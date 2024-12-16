@@ -245,15 +245,16 @@ void showProgress(size_t totalPasswords) {
         std::chrono::duration<double> elapsed = now - start;
         double hashrate = (elapsed.count() > 0.0) ? (tested / elapsed.count()) : 0.0;
 
+        double displayhashrate = hashrate;
         std::string hashrateUnit = "H/s";
         if (hashrate >= 1e9) {
-            hashrate /= 1e9;
+            displayhashrate = hashrate / 1e9;
             hashrateUnit = "GH/s";
         } else if (hashrate >= 1e6) {
-            hashrate /= 1e6;
+            displayhashrate = hashrate / 1e6;
             hashrateUnit = "MH/s";
         } else if (hashrate >= 1e3) {
-            hashrate /= 1e3;
+            displayhashrate = hashrate / 1e3;
             hashrateUnit = "kH/s";
         }
 
@@ -273,7 +274,7 @@ void showProgress(size_t totalPasswords) {
 
         std::cout << "\rFortschritt: " << std::fixed << std::setprecision(2) << progress << "% ("
                   << tested << "/" << totalPasswords << " getestet) "
-                  << "Hashrate: " << std::fixed << std::setprecision(2) << hashrate << " " << hashrateUnit << " "
+                  << "Hashrate: " << std::fixed << std::setprecision(2) << displayhashrate << " " << hashrateUnit << " "
                   << "Verbleibende Zeit: " << days << "d " << hours << "h " << minutes << "m " << seconds << "s"
                   << std::flush;
 
