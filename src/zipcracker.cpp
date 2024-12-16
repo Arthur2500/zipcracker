@@ -5,6 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <cstring>
+#include <cmath>
 #include <zip.h>
 #include <cstdlib>
 #include <atomic>
