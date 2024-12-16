@@ -21,7 +21,7 @@ jobs:
 
       - name: Compile zipcracker
         run: |
-          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lminizip
+          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker /usr/lib/libminizip.a -lz
 
       - name: Archive binary
         run: |
