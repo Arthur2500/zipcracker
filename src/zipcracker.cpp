@@ -1,154 +1,199 @@
 #include <iostream>
 #include <fstream>
-#include <string>
 #include <vector>
+#include <string>
 #include <thread>
-#include <mutex>
-#include <cstring>
-#include <cmath>
-#include <zip.h>
-#include <cstdlib>
 #include <atomic>
-#include <unistd.h>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <getopt.h>
+#include <minizip/unzip.h>
 
+std::atomic<size_t> testedPasswords(0);
 std::atomic<bool> found(false);
-std::string correct_password = "";
-std::atomic<int> passwords_checked(0);
-std::mutex output_mutex;
+std::mutex passwordMutex;
+std::condition_variable passwordCv;
 
-// Passwort-Generierung (lazy): a-zA-Z0-9
-void generate_passwords(const std::string& charset, size_t length, size_t start, size_t step, std::vector<std::string>& passwords) {
-    size_t num_combinations = std::pow(charset.size(), length);
-    for (size_t i = start; i < num_combinations && !found; i += step) {
-        std::string password(length, charset[0]);
-        size_t temp = i;
-        for (size_t j = 0; j < length; ++j) {
-            password[j] = charset[temp % charset.size()];
-            temp /= charset.size();
-        }
-        passwords.push_back(password);
+std::string detectZipEncryption(const char* zipFile) {
+    unzFile zip = unzOpen(zipFile);
+    if (!zip) return "unknown";
+    if (unzGoToFirstFile(zip) != UNZ_OK) {
+        unzClose(zip);
+        return "unknown";
     }
+    unz_file_info fileInfo;
+    char fileName[256];
+    if (unzGetCurrentFileInfo(zip, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+        if (fileInfo.compression_method == 99) {
+            unzClose(zip);
+            return "aes256";
+        } else {
+            unzClose(zip);
+            return "zipcrypto";
+        }
+    }
+    unzClose(zip);
+    return "unknown";
 }
 
-// Passwort-Check
-bool try_password(const std::string& filepath, const std::string& password) {
-    int err = 0;
-    zip_t* archive = zip_open(filepath.c_str(), ZIP_RDONLY, &err);
-    if (!archive) {
+bool testZipPassword(const char* zipFile, const char* password) {
+    unzFile zip = unzOpen(zipFile);
+    if (!zip) return false;
+    if (unzGoToFirstFile(zip) != UNZ_OK) {
+        unzClose(zip);
         return false;
     }
-    zip_set_default_password(archive, password.c_str());
-    zip_file_t* file = zip_fopen_index(archive, 0, 0);
-    if (file) {
-        zip_fclose(file);
-        zip_close(archive);
+    if (unzOpenCurrentFilePassword(zip, password) == UNZ_OK) {
+        unzCloseCurrentFile(zip);
+        unzClose(zip);
         return true;
     }
-    zip_close(archive);
+    unzClose(zip);
     return false;
 }
 
-// Brute-Force-Worker
-void brute_force_worker(const std::string& filepath, const std::vector<std::string>& passwords) {
-    for (const auto& password : passwords) {
-        if (found) return;
-        passwords_checked++;
-        if (try_password(filepath, password)) {
-            std::lock_guard<std::mutex> lock(output_mutex);
-            found = true;
-            correct_password = password;
-            return;
+void generatePasswords(const std::string& prefix, int length, const std::string& charset, std::queue<std::string>& passwordQueue) {
+    if (length == 0) {
+        std::lock_guard<std::mutex> lock(passwordMutex);
+        passwordQueue.push(prefix);
+        passwordCv.notify_one();
+        return;
+    }
+    for (char c : charset) {
+        generatePasswords(prefix + c, length - 1, charset, passwordQueue);
+    }
+}
+
+void bruteForce(const char* file, const std::string& encryptionType, std::queue<std::string>& passwordQueue, std::string& result) {
+    while (!found.load()) {
+        std::string password;
+        {
+            std::unique_lock<std::mutex> lock(passwordMutex);
+            passwordCv.wait(lock, [&]() { return !passwordQueue.empty() || found.load(); });
+            if (found.load()) break;
+            password = passwordQueue.front();
+            passwordQueue.pop();
+        }
+        testedPasswords++;
+        if (testZipPassword(file, password.c_str())) {
+            found.store(true);
+            result = password;
+            break;
         }
     }
 }
 
-// Fortschritt anzeigen
-void show_progress(size_t total_passwords) {
-    while (!found) {
-        {
-            std::lock_guard<std::mutex> lock(output_mutex);
-            double percent = (double(passwords_checked) / total_passwords) * 100;
-            std::cout << "\rChecked: " << passwords_checked
-                      << " / " << total_passwords
-                      << " (" << percent << "%)"
-                      << " Remaining: " << total_passwords - passwords_checked;
-        }
+void showProgress(size_t totalPasswords) {
+    while (!found.load()) {
+        size_t tested = testedPasswords.load();
+        double progress = std::min(100.0, (double)tested / totalPasswords * 100.0);
+        std::cout << "\rFortschritt: " << progress << "% (" << tested << "/" << totalPasswords << " getestet)" << std::flush;
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
+    if (found.load()) {
+        std::cout << "\rPasswort gefunden!" << std::endl;
+    } else {
+        std::cout << "\rFortschritt: 100% abgeschlossen. Passwort nicht gefunden." << std::endl;
+    }
+}
+
+size_t calculateTotalPasswords(int length, const std::string& charset) {
+    size_t total = 1;
+    for (int i = 0; i < length; ++i) {
+        total *= charset.size();
+    }
+    return total;
 }
 
 int main(int argc, char* argv[]) {
-    std::string filepath;
-    size_t num_threads = 1;
-    size_t length = 1;
-    std::string wordlist_path;
-    bool use_wordlist = false;
+    const char* file = nullptr;
+    int passwordLength = 0;
+    bool useWordlist = false;
+    std::string wordlistPath;
+    int threadCount = std::thread::hardware_concurrency();
 
-    const std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    static struct option long_options[] = {
+        {"file", required_argument, 0, 'f'},
+        {"length", required_argument, 0, 'l'},
+        {"wordlist", required_argument, 0, 'w'},
+        {"threads", required_argument, 0, 't'},
+        {0, 0, 0, 0}
+    };
 
-    // Argumente parsen
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--file") == 0) {
-            filepath = argv[++i];
-        } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--threads") == 0) {
-            num_threads = std::stoi(argv[++i]);
-        } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--length") == 0) {
-            length = std::stoi(argv[++i]);
-        } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--wordlist") == 0) {
-            wordlist_path = argv[++i];
-            use_wordlist = true;
+    int option_index = 0;
+    int opt;
+    while ((opt = getopt_long(argc, argv, "f:l:w:t:", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'f':
+                file = optarg;
+                break;
+            case 'l':
+                passwordLength = std::stoi(optarg);
+                break;
+            case 'w':
+                wordlistPath = optarg;
+                useWordlist = true;
+                break;
+            case 't':
+                threadCount = std::stoi(optarg);
+                if (threadCount <= 0) {
+                    std::cerr << "Fehler: Ungültige Anzahl von Threads!" << std::endl;
+                    return 1;
+                }
+                break;
+            default:
+                std::cerr << "Verwendung: " << argv[0] << " -f <file> [-l <password-length>] [-w <wordlist>] [-t <thread-count>]" << std::endl;
+                return 1;
         }
     }
 
-    if (filepath.empty()) {
-        std::cerr << "Error: No file provided. Use -f or --file to specify the ZIP file.\n";
+    if (!file) {
+        std::cerr << "Fehler: Bitte -f <file> angeben!" << std::endl;
         return 1;
     }
 
-    // Prüfen, ob die Wordlist genutzt werden soll
-    std::vector<std::string> passwords;
-    if (use_wordlist) {
-        std::ifstream wordlist(wordlist_path);
+    const std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    std::queue<std::string> passwordQueue;
+    std::string result;
+    size_t totalPasswords = 0;
+
+    if (useWordlist) {
+        std::ifstream wordlist(wordlistPath);
         if (!wordlist) {
-            std::cerr << "Error: Cannot open wordlist file.\n";
+            std::cerr << "Fehler: Wordlist konnte nicht geladen werden!" << std::endl;
             return 1;
         }
-        std::string word;
-        while (wordlist >> word) {
-            passwords.push_back(word);
+        std::string line;
+        while (std::getline(wordlist, line)) {
+            passwordQueue.push(line);
         }
+        totalPasswords = passwordQueue.size();
     } else {
-        size_t total_passwords = std::pow(charset.size(), length);
-        passwords.resize(total_passwords);
-        generate_passwords(charset, length, 0, 1, passwords);
+        totalPasswords = calculateTotalPasswords(passwordLength, charset);
+        std::thread generatorThread([&]() {
+            generatePasswords("", passwordLength, charset, passwordQueue);
+        });
+        generatorThread.detach();
     }
 
-    size_t total_passwords = passwords.size();
-    std::cout << "Starting brute-force attack with " << total_passwords << " possible passwords...\n";
+    std::thread progressThread([&]() { showProgress(totalPasswords); });
 
-    // Threads erstellen
     std::vector<std::thread> threads;
-    size_t chunk_size = passwords.size() / num_threads;
-
-    for (size_t i = 0; i < num_threads; ++i) {
-        size_t start = i * chunk_size;
-        size_t end = (i + 1 == num_threads) ? passwords.size() : (i + 1) * chunk_size;
-        threads.emplace_back(brute_force_worker, filepath, std::vector<std::string>(passwords.begin() + start, passwords.begin() + end));
+    for (int i = 0; i < threadCount; ++i) {
+        threads.emplace_back([&]() { bruteForce(file, "zipcrypto", passwordQueue, result); });
     }
 
-    // Fortschrittsanzeige starten
-    std::thread progress_thread(show_progress, total_passwords);
-
-    // Warten, bis alle Threads fertig sind
-    for (auto& thread : threads) {
-        thread.join();
+    for (auto& t : threads) {
+        if (t.joinable()) t.join();
     }
-    progress_thread.join();
+
+    progressThread.join();
 
     if (found) {
-        std::cout << "\nPassword found: " << correct_password << "\n";
+        std::cout << "Erfolgreich! Passwort gefunden: " << result << std::endl;
     } else {
-        std::cout << "\nPassword not found.\n";
+        std::cerr << "Passwort konnte nicht gefunden werden!" << std::endl;
     }
 
     return 0;
