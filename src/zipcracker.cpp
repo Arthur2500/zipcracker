@@ -14,19 +14,26 @@
 #include <cmath>
 #include <cstring>
 
+// Globale Stati
 std::atomic<size_t> testedPasswords(0);
 std::atomic<bool> found(false);
+
+// Signalisiert, dass kein weiteres Passwort mehr nachkommt (Queue bleibt leer)
+std::atomic<bool> generationFinished(false);
+
 std::mutex passwordMutex;
 std::condition_variable passwordCv;
 
+// Struktur für das Lesen aus einem (gemeinsamen) Speicherpuffer
 struct MemoryBuffer {
     const unsigned char* data;
     size_t size;
     size_t pos;
 };
 
+// Minizip-Callbacks für das Lesen aus einem MemoryBuffer
 voidpf ZCALLBACK mem_open_file_func(voidpf opaque, const char*, int) {
-    return opaque;
+    return opaque; // opaque ist unser MemoryBuffer*
 }
 
 uLong ZCALLBACK mem_read_file_func(voidpf opaque, voidpf, void* buf, uLong size) {
@@ -83,6 +90,7 @@ int ZCALLBACK mem_error_file_func(voidpf, voidpf) {
     return 0;
 }
 
+// Liest die ZIP-Datei komplett in den RAM
 std::vector<unsigned char> loadZipFileToMemory(const char* zipFilename) {
     std::ifstream file(zipFilename, std::ios::binary | std::ios::ate);
     if (!file) {
@@ -103,6 +111,7 @@ std::vector<unsigned char> loadZipFileToMemory(const char* zipFilename) {
     return buffer;
 }
 
+// Öffnet ein unzFile-Handle, das exklusiv einem Thread gehört
 unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     zlib_filefunc_def memory_filefunc_def;
     memory_filefunc_def.zopen_file = mem_open_file_func;
@@ -113,13 +122,13 @@ unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     memory_filefunc_def.zclose_file = mem_close_file_func;
     memory_filefunc_def.zerror_file = mem_error_file_func;
 
+    // Jeder Thread bekommt ein eigenes MemoryBuffer
     MemoryBuffer* memBuf = new MemoryBuffer;
     memBuf->data = zipData.data();
     memBuf->size = zipData.size();
     memBuf->pos  = 0;
 
     memory_filefunc_def.opaque = memBuf;
-
     unzFile uf = unzOpen2((const char*)memBuf, &memory_filefunc_def);
     if (!uf) {
         delete memBuf;
@@ -127,6 +136,7 @@ unzFile openThreadLocalHandle(const std::vector<unsigned char>& zipData) {
     return uf;
 }
 
+// Erkennen der Verschlüsselung (einmalig)
 std::string detectZipEncryption(const std::vector<unsigned char>& zipData) {
     unzFile tmp = openThreadLocalHandle(zipData);
     if (!tmp) return "unknown";
@@ -146,7 +156,9 @@ std::string detectZipEncryption(const std::vector<unsigned char>& zipData) {
     return "unknown";
 }
 
+// Passworttest mit thread-lokalem Handle
 bool testZipPasswordThreadLocal(unzFile uf, const char* password) {
+    // Jedem Thread gehört sein eigenes unzFile -> kein globaler Mutex nötig
     unzCloseCurrentFile(uf);
     if (unzGoToFirstFile(uf) != UNZ_OK) {
         return false;
@@ -158,6 +170,7 @@ bool testZipPasswordThreadLocal(unzFile uf, const char* password) {
     return false;
 }
 
+// Passwort-Generator
 void generatePasswords(const std::string& prefix, int length, const std::string& charset,
                        std::queue<std::string>& passwordQueue)
 {
@@ -174,18 +187,35 @@ void generatePasswords(const std::string& prefix, int length, const std::string&
     }
 }
 
+// Worker-Thread
 void bruteForceThread(unzFile threadLocalHandle, std::queue<std::string>& passwordQueue, std::string& result) {
-    while (!found.load()) {
+    while (true) {
+        if (found.load()) break;
+
         std::string password;
         {
             std::unique_lock<std::mutex> lock(passwordMutex);
-            passwordCv.wait(lock, [&]() { return !passwordQueue.empty() || found.load(); });
-            if (found.load()) break;
-            password = passwordQueue.front();
-            passwordQueue.pop();
-        }
-        testedPasswords++;
+            passwordCv.wait(lock, [&]() {
+                // Warte, bis Passwort da, oder 'found' ist true, oder Generation ist fertig und Queue leer
+                return found.load() || (!passwordQueue.empty()) || (generationFinished.load() && passwordQueue.empty());
+            });
 
+            if (found.load()) break;
+
+            // Falls Queue leer und Generierung fertig --> Abbruch
+            if (passwordQueue.empty() && generationFinished.load()) {
+                break;
+            }
+            if (!passwordQueue.empty()) {
+                password = passwordQueue.front();
+                passwordQueue.pop();
+            } else {
+                // Noch keine Passwörter in Queue, aber generationFinished ist möglicherweise false => weiter
+                continue;
+            }
+        }
+
+        testedPasswords++;
         if (testZipPasswordThreadLocal(threadLocalHandle, password.c_str())) {
             found.store(true);
             result = password;
@@ -194,16 +224,26 @@ void bruteForceThread(unzFile threadLocalHandle, std::queue<std::string>& passwo
     }
 }
 
+// Fortschrittsanzeige
 void showProgress(size_t totalPasswords) {
     auto start = std::chrono::steady_clock::now();
-    while (!found.load()) {
+
+    while (true) {
+        if (found.load()) break;
+
         size_t tested = testedPasswords.load();
+        bool allTested = (tested >= totalPasswords);
+
+        // Falls wir schon alle durch haben, brechen wir ab:
+        if (allTested) break;
+
         double progress = (totalPasswords == 0)
                           ? 0.0
                           : std::min(100.0, (double)tested / totalPasswords * 100.0);
+
         auto now = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed = now - start;
-        double hashrate = tested / (elapsed.count() > 0 ? elapsed.count() : 1.0);
+        double hashrate = (elapsed.count() > 0.0) ? (tested / elapsed.count()) : 0.0;
 
         std::string hashrateUnit = "H/s";
         if (hashrate >= 1e9) {
@@ -217,9 +257,10 @@ void showProgress(size_t totalPasswords) {
             hashrateUnit = "kH/s";
         }
 
-        double remainingTime = (totalPasswords > tested)
-                               ? (totalPasswords - tested) / (hashrate > 0 ? hashrate : 1.0)
-                               : 0;
+        // KORRIGIERTE Formel für Restzeit
+        double remainingTime = (hashrate > 0.0)
+                               ? (totalPasswords - tested) / hashrate
+                               : 0.0;
 
         if (remainingTime < 0 || std::isinf(remainingTime) || std::isnan(remainingTime)) {
             remainingTime = 0;
@@ -236,17 +277,19 @@ void showProgress(size_t totalPasswords) {
                   << "Verbleibende Zeit: " << days << "d " << hours << "h " << minutes << "m " << seconds << "s"
                   << std::flush;
 
-        if (found.load()) break;
+        // 1 Sekunde warten
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
+    // Finaler Status
     if (found.load()) {
-        std::cout << "\rPasswort gefunden!" << std::endl;
+        std::cout << "\rPasswort gefunden!\n";
     } else {
-        std::cout << "\rFortschritt: 100% abgeschlossen. Passwort nicht gefunden." << std::endl;
+        std::cout << "\rFortschritt: 100% abgeschlossen. Passwort nicht gefunden.\n";
     }
 }
 
+// Anzahl möglicher Passwörter berechnen
 size_t calculateTotalPasswords(int length, const std::string& charset, bool recursive) {
     size_t total = 0;
     if (recursive) {
@@ -320,21 +363,25 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // ZIP einmal in RAM laden
     std::vector<unsigned char> zipData = loadZipFileToMemory(file);
     if (zipData.empty()) {
         return 1;
     }
 
+    // Verschlüsselungs-Typ ermitteln
     std::string encryptionType = detectZipEncryption(zipData);
     std::cout << "Erkannte Verschlüsselungsmethode: " << encryptionType << std::endl;
 
     const std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
+    // Queue für Passwörter
     std::queue<std::string> passwordQueue;
     std::string result;
     size_t totalPasswords = 0;
 
     if (useWordlist) {
+        // Wordlist
         std::ifstream wordlist(wordlistPath);
         if (!wordlist) {
             std::cerr << "Fehler: Wordlist konnte nicht geladen werden!\n";
@@ -345,8 +392,12 @@ int main(int argc, char* argv[]) {
             passwordQueue.push(line);
         }
         totalPasswords = passwordQueue.size();
+        // Hier sind wir mit dem Befüllen "fertig":
+        generationFinished.store(true);
     } else {
+        // Brute-Force
         totalPasswords = calculateTotalPasswords(passwordLength, charset, recursive);
+        // Generator im Hintergrund
         std::thread generatorThread([&]() {
             if (recursive) {
                 for (int i = 1; i <= passwordLength; ++i) {
@@ -355,12 +406,17 @@ int main(int argc, char* argv[]) {
             } else {
                 generatePasswords("", passwordLength, charset, passwordQueue);
             }
+            // Wenn fertig, Signal:
+            generationFinished.store(true);
+            passwordCv.notify_all();
         });
         generatorThread.detach();
     }
 
+    // Fortschrittsanzeige
     std::thread progressThread([&]() { showProgress(totalPasswords); });
 
+    // Worker-Threads
     std::vector<std::thread> threads;
     threads.reserve(threadCount);
     for (int i = 0; i < threadCount; ++i) {
@@ -369,18 +425,21 @@ int main(int argc, char* argv[]) {
             std::cerr << "Fehler beim Erstellen eines unzFile-Handles für Thread " << i << "\n";
             continue;
         }
+        // Worker-Thread
         threads.emplace_back([&, threadLocalHandle]() {
             bruteForceThread(threadLocalHandle, passwordQueue, result);
             unzClose(threadLocalHandle);
         });
     }
 
+    // Auf alle Worker-Threads warten
     for (auto& t : threads) {
         if (t.joinable()) {
             t.join();
         }
     }
 
+    // Fortschrittsanzeige beenden
     progressThread.join();
 
     if (found) {
