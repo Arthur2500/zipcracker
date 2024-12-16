@@ -28,6 +28,7 @@ jobs:
       run: |
         mkdir -p artifacts
         mv zipcracker artifacts/
+        chmod +x artifacts/zipcracker
 
     - name: Upload artifact
       uses: actions/upload-artifact@v3
