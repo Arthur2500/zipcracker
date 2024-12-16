@@ -7,31 +7,85 @@ on:
   pull_request:
 
 jobs:
-  build:
-    name: Build and Upload zipcracker
+  build-linux-x86:
+    name: Build for Linux x86
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential libzip-dev
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libzip-dev
 
-    - name: Compile zipcracker
-      run: |
-        g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+      - name: Compile zipcracker
+        run: |
+          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
 
-    - name: Archive binary
-      run: |
-        mkdir -p artifacts
-        mv zipcracker artifacts/
-        chmod +x artifacts/zipcracker
+      - name: Archive binary
+        run: |
+          mkdir -p artifacts
+          mv zipcracker artifacts/zipcracker-linux-x86
+          chmod +x artifacts/zipcracker-linux-x86
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: zipcracker
-        path: artifacts/zipcracker
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zipcracker-linux-x86
+          path: artifacts/zipcracker-linux-x86
+
+  build-linux-arm:
+    name: Build for Linux ARM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install ARM cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libzip-dev
+
+      - name: Compile zipcracker for ARM
+        run: |
+          aarch64-linux-gnu-g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+
+      - name: Archive binary
+        run: |
+          mkdir -p artifacts
+          mv zipcracker artifacts/zipcracker-linux-arm
+          chmod +x artifacts/zipcracker-linux-arm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zipcracker-linux-arm
+          path: artifacts/zipcracker-linux-arm
+
+  build-macos:
+    name: Build for macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          brew install libzip
+
+      - name: Compile zipcracker
+        run: |
+          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+
+      - name: Archive binary
+        run: |
+          mkdir -p artifacts
+          mv zipcracker artifacts/zipcracker-macos
+          chmod +x artifacts/zipcracker-macos
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zipcracker-macos
+          path: artifacts/zipcracker-macos
