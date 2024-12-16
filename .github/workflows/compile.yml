@@ -22,7 +22,7 @@ jobs:
 
     - name: Compile zipcracker
       run: |
-        g++ -std=c++17 -pthread -lzip -o zipcracker src/zipcracker.cpp
+        g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
 
     - name: Archive binary
       run: |
