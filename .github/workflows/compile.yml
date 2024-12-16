@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-linux-x86:
-    name: Build for Linux x86
+    name: Build for Linux
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -26,42 +26,14 @@ jobs:
       - name: Archive binary
         run: |
           mkdir -p artifacts
-          mv zipcracker artifacts/zipcracker-linux-x86
-          chmod +x artifacts/zipcracker-linux-x86
+          mv zipcracker artifacts/zipcracker-linux
+          chmod +x artifacts/zipcracker-linux
 
       - name: Upload artifact
         uses: actions/upload-artifact@v3
         with:
-          name: zipcracker-linux-x86
-          path: artifacts/zipcracker-linux-x86
-
-  build-linux-arm:
-    name: Build for Linux ARM
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install ARM cross-compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y g++-aarch64-linux-gnu libzip-dev libzip-dev:arm64
-
-      - name: Compile zipcracker for ARM
-        run: |
-          aarch64-linux-gnu-g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
-
-      - name: Archive binary
-        run: |
-          mkdir -p artifacts
-          mv zipcracker artifacts/zipcracker-linux-arm
-          chmod +x artifacts/zipcracker-linux-arm
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: zipcracker-linux-arm
-          path: artifacts/zipcracker-linux-arm
+          name: zipcracker-linux
+          path: artifacts/zipcracker-linux
 
   build-macos:
     name: Build for macOS
