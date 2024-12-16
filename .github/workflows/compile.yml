@@ -49,7 +49,7 @@ jobs:
 
       - name: Compile zipcracker for ARM
         run: |
-          aarch64-linux-gnu-g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+          cpp-aarch64-linux-gnu -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
 
       - name: Archive binary
         run: |
@@ -76,7 +76,7 @@ jobs:
 
       - name: Compile zipcracker
         run: |
-          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker -lzip
+          g++ -o zipcracker src/zipcracker.cpp -I/opt/homebrew/include -L/opt/homebrew/lib -lzip -std=c++17
 
       - name: Archive binary
         run: |
