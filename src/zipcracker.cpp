@@ -9,6 +9,8 @@
 #include <queue>
 #include <getopt.h>
 #include <minizip/unzip.h>
+#include <chrono>
+#include <iomanip>
 
 std::atomic<size_t> testedPasswords(0);
 std::atomic<bool> found(false);
@@ -63,11 +65,28 @@ void bruteForce(const char* file, const std::string& encryptionType, std::queue<
 }
 
 void showProgress(size_t totalPasswords) {
+    auto start = std::chrono::steady_clock::now();
     while (!found.load()) {
         size_t tested = testedPasswords.load();
         double progress = std::min(100.0, (double)tested / totalPasswords * 100.0);
-        std::cout << "\rFortschritt: " << progress << "% (" << tested << "/" << totalPasswords << " getestet)" << std::flush;
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        auto now = std::chrono::steady_clock::now();
+        std::chrono::duration<double> elapsed = now - start;
+        double hashrate = tested / elapsed.count();
+        double remainingTime = (totalPasswords - tested) / hashrate;
+
+        if (remainingTime < 0 || std::isinf(remainingTime) || std::isnan(remainingTime)) {
+            remainingTime = 0;
+        }
+
+        int days = static_cast<int>(remainingTime / 86400);
+        int hours = static_cast<int>((remainingTime - days * 86400) / 3600);
+        int minutes = static_cast<int>((remainingTime - days * 86400 - hours * 3600) / 60);
+        int seconds = static_cast<int>(remainingTime - days * 86400 - hours * 3600 - minutes * 60);
+
+        std::cout << "\rFortschritt: " << std::fixed << std::setprecision(2) << progress << "% (" << tested << "/" << totalPasswords << " getestet) "
+                  << "Hashrate: " << std::fixed << std::setprecision(2) << hashrate << " H/s "
+                  << "Verbleibende Zeit: " << days << "d " << hours << "h " << minutes << "m " << seconds << "s" << std::flush;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     }
     if (found.load()) {
         std::cout << "\rPasswort gefunden!" << std::endl;
@@ -76,14 +95,22 @@ void showProgress(size_t totalPasswords) {
     }
 }
 
-size_t calculateTotalPasswords(int length, const std::string& charset) {
+size_t calculateTotalPasswords(int length, const std::string& charset, bool recursive) {
     size_t total = 0;
-    for (int i = 1; i <= length; ++i) {
+    if (recursive) {
+        for (int i = 1; i <= length; ++i) {
+            size_t count = 1;
+            for (int j = 0; j < i; ++j) {
+                count *= charset.size();
+            }
+            total += count;
+        }
+    } else {
         size_t count = 1;
-        for (int j = 0; j < i; ++j) {
+        for (int j = 0; j < length; ++j) {
             count *= charset.size();
         }
-        total += count;
+        total = count;
     }
     return total;
 }
@@ -157,7 +184,7 @@ int main(int argc, char* argv[]) {
         }
         totalPasswords = passwordQueue.size();
     } else {
-        totalPasswords = calculateTotalPasswords(passwordLength, charset);
+        totalPasswords = calculateTotalPasswords(passwordLength, charset, recursive);
         std::thread generatorThread([&]() {
             if (recursive) {
                 for (int i = 1; i <= passwordLength; ++i) {
