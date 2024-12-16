@@ -18,6 +18,28 @@ std::atomic<bool> found(false);
 std::mutex passwordMutex;
 std::condition_variable passwordCv;
 
+std::string detectZipEncryption(const char* zipFile) {
+    unzFile zip = unzOpen(zipFile);
+    if (!zip) return "unknown";
+    if (unzGoToFirstFile(zip) != UNZ_OK) {
+        unzClose(zip);
+        return "unknown";
+    }
+    unz_file_info fileInfo;
+    char fileName[256];
+    if (unzGetCurrentFileInfo(zip, &fileInfo, fileName, sizeof(fileName), nullptr, 0, nullptr, 0) == UNZ_OK) {
+        if (fileInfo.compression_method == 99) {
+            unzClose(zip);
+            return "aes256";
+        } else {
+            unzClose(zip);
+            return "zipcrypto";
+        }
+    }
+    unzClose(zip);
+    return "unknown";
+}
+
 bool testZipPassword(const char* zipFile, const char* password) {
     unzFile zip = unzOpen(zipFile);
     if (!zip) return false;
@@ -172,6 +194,7 @@ int main(int argc, char* argv[]) {
     std::queue<std::string> passwordQueue;
     std::string result;
     size_t totalPasswords = 0;
+    std::string encryptionType = detectZipEncryption(file);
 
     if (useWordlist) {
         std::ifstream wordlist(wordlistPath);
@@ -202,7 +225,7 @@ int main(int argc, char* argv[]) {
 
     std::vector<std::thread> threads;
     for (int i = 0; i < threadCount; ++i) {
-        threads.emplace_back([&]() { bruteForce(file, "zipcrypto", passwordQueue, result); });
+        threads.emplace_back([&]() { bruteForce(file, encryptionType, passwordQueue, result); });
     }
 
     for (auto& t : threads) {
