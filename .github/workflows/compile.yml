@@ -1,0 +1,63 @@
+name: Build and Upload zipcracker
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build-linux-x86:
+    name: Build for Linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libminizip-dev
+
+      - name: Compile zipcracker
+        run: |
+          g++ -std=c++17 -pthread src/zipcracker.cpp -o zipcracker /usr/lib/x86_64-linux-gnu/libminizip.a -lz -O3
+
+      - name: Archive binary
+        run: |
+          mkdir -p artifacts
+          mv zipcracker artifacts/zipcracker-linux
+          chmod +x artifacts/zipcracker-linux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zipcracker-linux
+          path: artifacts/zipcracker-linux
+
+  build-macos:
+    name: Build for macOS
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: |
+          brew install minizip
+
+      - name: Compile zipcracker
+        run: |
+          g++ -o zipcracker src/zipcracker.cpp -I/opt/homebrew/include -L/opt/homebrew/lib -lminizip -std=c++17 -O3
+
+      - name: Archive binary
+        run: |
+          mkdir -p artifacts
+          mv zipcracker artifacts/zipcracker-macos
+          chmod +x artifacts/zipcracker-macos
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: zipcracker-macos
+          path: artifacts/zipcracker-macos
