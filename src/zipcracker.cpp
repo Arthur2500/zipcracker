@@ -318,6 +318,7 @@ int main(int argc, char* argv[]) {
     std::string wordlistPath;
     int threadCount = std::thread::hardware_concurrency();
     bool recursive = false;
+    std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; // Standard-Zeichen-Set
 
     static struct option long_options[] = {
         {"file", required_argument, 0, 'f'},
@@ -325,12 +326,13 @@ int main(int argc, char* argv[]) {
         {"wordlist", required_argument, 0, 'w'},
         {"threads", required_argument, 0, 't'},
         {"recursive", no_argument, 0, 'r'},
+        {"charset", required_argument, 0, 'c'}, // Neue Option für das Zeichen-Set
         {0, 0, 0, 0}
     };
 
     int option_index = 0;
     int opt;
-    while ((opt = getopt_long(argc, argv, "f:l:w:t:r", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "f:l:w:t:rc:", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'f':
                 file = optarg;
@@ -352,9 +354,12 @@ int main(int argc, char* argv[]) {
             case 'r':
                 recursive = true;
                 break;
+            case 'c':
+                charset = optarg; // Setze das Zeichen-Set auf den angegebenen Wert
+                break;
             default:
                 std::cerr << "Verwendung: " << argv[0]
-                          << " -f <file> [-l <password-length>] [-w <wordlist>] [-t <thread-count>] [-r]\n";
+                          << " -f <file> [-l <password-length>] [-w <wordlist>] [-t <thread-count>] [-r] [-c <charset>]\n";
                 return 1;
         }
     }
@@ -373,8 +378,6 @@ int main(int argc, char* argv[]) {
     // Verschlüsselungs-Typ ermitteln
     std::string encryptionType = detectZipEncryption(zipData);
     std::cout << "Erkannte Verschlüsselungsmethode: " << encryptionType << std::endl;
-
-    const std::string charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
     // Queue für Passwörter
     std::queue<std::string> passwordQueue;
